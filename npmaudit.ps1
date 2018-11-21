@@ -1,6 +1,39 @@
 <#
+.SYNOPSIS
+
+Script to generate information about vulnerable js libraries
+in an automation-ready form based on npm-audit.
+
+.DESCRIPTION
+
+This script simply runs npm-audit and parses the output.
+Allows to fail on threshold severity, exclude devDependencies
+and save result as json.
+
+.PARAMETER targetFolder
+Folder with package.json file.
+
+.PARAMETER failOn
+Specifies threshold of vulnerability severity level that makes script to exit with code 1.
+Allowed values: none, low, moderate, high.
+
+.PARAMETER includeDevDeps
+Whether to report vulnerabilities for devDependencies.
+Allowed values: $true, $false
+
+.PARAMETER outputFile
+Output file for resulting json object. When empty, result are printed to console.
+
+.PARAMETER silent
+Supress output.
+Allowed values: $true, $false
+
+.EXAMPLE
+
+C:\PS> npmaudit.ps1 -targetFolder "myFolder" -failOn moderate -outputFile result.json
 
 #>
+
 param (
     [string]$targetFolder = ".",
     [ValidateSet('none','low','moderate','high')]
@@ -88,8 +121,8 @@ finally
     switch ($failOn)
     {
         "high" { if ($highCount -gt 0) { Exit 1 } }
-        "moderate" { if ($moderateCount -gt 0) { Exit 1 } }
-        "low" { if ($lowCount -gt 0) { Exit 1 } }
+        "moderate" { if (($moderateCount -gt 0) -Or ($highCount -gt 0)) { Exit 1 } }
+        "low" { if (($moderateCount -gt 0) -Or ($highCount -gt 0) -Or ($lowCount -gt 0)) { Exit 1 } }
         "none" { Exit 0 }
     }
 }
