@@ -13,7 +13,7 @@ and save result as json.
 .PARAMETER targetFolder
 Folder with package.json file.
 
-.PARAMETER failOn
+.PARAMETER failOnVulnLevel
 Specifies threshold of vulnerability severity level that makes script to exit with code 1.
 Allowed values: none, low, moderate, high.
 
@@ -21,7 +21,7 @@ Allowed values: none, low, moderate, high.
 Whether to report vulnerabilities for devDependencies.
 Allowed values: $true, $false
 
-.PARAMETER outputFile
+.PARAMETER outputFileVuln
 Output file for resulting json object. When empty, result are printed to console.
 
 .PARAMETER silent
@@ -30,16 +30,18 @@ Allowed values: $true, $false
 
 .EXAMPLE
 
-C:\PS> npmaudit.ps1 -targetFolder "myFolder" -failOn moderate -outputFile result.json
+C:\PS> npmaudit.ps1 -targetFolder "myFolder" -failOnVulnLevel moderate -outputFileVuln result.json
 
 #>
 
 param (
+    [ValidateSet('all','licenses','vulnerabilities')]    
+    [string]$checks = "all",
     [string]$targetFolder = ".",
     [ValidateSet('none','low','moderate','high')]
-    [string]$failOn = "none",
+    [string]$failOnVulnLevel = "none",
     [bool]$includeDevDeps = $false,
-    [string]$outputFile = "",
+    [string]$outputFileVuln = "",
     [bool]$silent = $false
 )
 
@@ -49,8 +51,32 @@ if (-Not (Test-Path $targetFolder\package.json))
     Exit 1
 }
 
-$findings = @()
-$highCount, $moderateCount, $lowCount = 0
+$findingsVuln = @()
+$highCount = 0
+$moderateCount = 0
+$lowCount = 0
+$vulnCheckStatus = "OK"
+$licenseCheckStatus = "OK"
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+$allowedLicenses = @(
+    'MIT',
+    'MIT*',
+    'Apache-2.0',
+    'AFL 2.1',
+    'AFL 3.0',
+    'ASL 1.1',
+    'Boost Software License',
+    'BSD-2-Clause',
+    'BSD-3-clause',
+    'CC-BY',
+    'MS-PL',
+    'ISC'    
+    ) -join ";"
+
+$prohibitedLicenses = @()
+
 Push-Location
 Set-Location $targetFolder
 
@@ -65,52 +91,93 @@ try
 
     $content | ConvertTo-Json | Out-File package.json -Encoding ASCII
     if (-Not $silent) { Write-Host "Resolving dependencies" }
-    npm install --package-lock-only --no-audit | Out-Null
-    if (-Not $silent) { Write-Host "Auditing dependencies" }
-    $audit = $(npm audit -j | ConvertFrom-Json)
-
-    foreach ($finding in $audit.advisories.PSObject.Properties)
+    
+    if (($checks -eq "all") -Or ($checks -eq "licenses"))
     {
-        if ($($finding.Value.severity) -eq "high") {
+        npm install --no-audit | Out-Null
+    }
+    else 
+    {
+        # we don't need to actually install for vuln check
+        npm install --package-lock-only --no-audit | Out-Null
+    }
+    
+    if (($checks -eq "vulnerabilities") -Or ($checks -eq "all"))
+    {
+        if (-Not $silent) { Write-Host "Looking for vulnerabilities in dependencies" }
 
-        }
+        $audit = $(npm audit -j | ConvertFrom-Json)
 
-        switch ($finding.Value.severity)
+        foreach ($finding in $audit.advisories.PSObject.Properties)
         {
-            "high" { $highCount += 1}
-            "moderate" { $moderateCount += 1}
-            "low" { $lowCount += 1 }
+            $finding
+            switch ($finding.Value.severity)
+            {
+                "high" { $highCount += 1}
+                "moderate" { $moderateCount += 1}
+                "low" { $lowCount += 1 }
+            }
+    
+            $findingsVuln += @{
+                "VulnerabilitySource" = "$($finding.Value.module_name)"
+                "VulnerabilityTitle" = "$($finding.Value.title)"
+                "VulnerabilitySeverity" = "$($finding.Value.severity)"
+                "VulnerabilityChains" = $finding.Value.findingsVuln.paths
+                "VulnerableVersions" = "$($finding.Value.vulnerable_versions)"
+                "PatchedVersions" = "$($finding.Value.patched_versions)"
+                "AdvisoryUrl" = "$($finding.Value.url)"
+            }
         }
-
-        $findings += @{
-            "VulnerabilitySource" = "$($finding.Value.module_name)"
-            "VulnerabilityTitle" = "$($finding.Value.title)"
-            "VulnerabilitySeverity" = "$($finding.Value.severity)"
-            "VulnerabilityChains" = $finding.Value.findings.paths
-            "VulnerableVersions" = "$($finding.Value.vulnerable_versions)"
-            "PatchedVersions" = "$($finding.Value.patched_versions)"
-            "AdvisoryUrl" = "$($finding.Value.url)"
+    }
+    
+    if ($($findingsVuln.Count) -gt 0) {
+        $vulnCheckStatus = "FAIL"
+    }
+    
+    if (($checks -eq "licenses") -Or ($checks -eq "all")) 
+    {
+        Write-Host "Checking licenses"
+        npm install --production | Out-Null
+        # get and remove not top-level dependencies
+        $prodDepList = $(npm ls --prod --depth 0 --parseable)
+        Get-ChildItem -Path .\node_modules\ | Where-Object {$_.FullName -notin $prodDepList} | Remove-Item -Force -Recurse
+        try {
+            $summary = $(license-checker --production --onlyAllow "$allowedLicenses" --summary)
         }
+        catch {
+            $licenseCheckStatus = "FAILED"
+        }
+        
     }
 
     if (-Not $silent)
     {
-        Write-Host "Found: $($findings.Count) vulnerabilities. Low: $lowCount - Moderate: $moderateCount - High: $highCount"
 
-        if ($($findings.Count) -gt 0)
+        Write-Host "--------------------"
+        Write-Host "Vulnerability check: $vulnCheckStatus"
+        Write-Host "--------------------"
+        Write-Host "Found: $($findingsVuln.Count) vulnerabilities. Low: $lowCount - Moderate: $moderateCount - High: $highCount"
+
+        if ($($findingsVuln.Count) -gt 0)
         {
-            Write-Host $($findings | ConvertTo-Json)
+            Write-Host $($findingsVuln | ConvertTo-Json)
         }
+        Write-Host "-------------------------"
+        Write-Host "License compliance check: $licenseCheckStatus"
+        Write-Host "-------------------------"
+        Write-Host "License breakdown:"
+        Write-Host "$summary"
     }
 
-    if ($outputFile)
+    if ($outputFileVuln)
     {
-        $findings | ConvertTo-Json | Out-File $outputFile -Encoding ASCII
+        $findingsVuln | ConvertTo-Json | Out-File $outputFileVuln -Encoding ASCII
     }
+
 }
 catch
 {
-    Write-Host "Error occurred: $($_.Exception.Message)"
+    Write-Host "Error occurred: $($_.Exception)"
 }
 finally
 {
@@ -118,7 +185,7 @@ finally
     Rename-Item -Path package.json.original -NewName package.json
     Pop-Location
 
-    switch ($failOn)
+    switch ($failOnVulnLevel)
     {
         "high" { if ($highCount -gt 0) { Exit 1 } }
         "moderate" { if (($moderateCount -gt 0) -Or ($highCount -gt 0)) { Exit 1 } }
