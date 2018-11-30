@@ -40,9 +40,16 @@ param (
     [string]$targetFolder = ".",
     [ValidateSet('none','low','moderate','high')]
     [string]$failOnVulnLevel = "none",
+    [ValidateSet($true, $false)]  
     [bool]$includeDevDeps = $false,
+    [string]$depth = "",
     [string]$outputFileVuln = "",
-    [bool]$silent = $false
+    [ValidateSet($true, $false)]  
+    [bool]$silent = $false,
+    [ValidateSet($true, $false)]  
+    [bool]$generateAttributions = $false,
+    [string]$attributionsOutputFile = "ATTRIBUTIONS"
+
 )
 
 if (-Not (Test-Path $targetFolder\package.json))
@@ -64,18 +71,21 @@ $allowedLicenses = @(
     'MIT',
     'MIT*',
     'Apache-2.0',
-    'AFL 2.1',
-    'AFL 3.0',
-    'ASL 1.1',
+    'AFL-2.1',
+    'AFLv2.1,BSD',
+    'AFL-3.0',
+    'ASL-1.1',
     'Boost Software License',
     'BSD-2-Clause',
-    'BSD-3-clause',
+    'BSD-3-Clause',
     'CC-BY',
     'MS-PL',
     'ISC'    
     ) -join ";"
 
 $prohibitedLicenses = @()
+
+# TODO: add prereq check on license-checker
 
 Push-Location
 Set-Location $targetFolder
@@ -94,12 +104,12 @@ try
     
     if (($checks -eq "all") -Or ($checks -eq "licenses"))
     {
-        npm install --no-audit | Out-Null
+        npm install --no-audit --silent | Out-Null
     }
     else 
     {
         # we don't need to actually install for vuln check
-        npm install --package-lock-only --no-audit | Out-Null
+        npm install --package-lock-only --no-audit --silent | Out-Null
     }
     
     if (($checks -eq "vulnerabilities") -Or ($checks -eq "all"))
@@ -136,37 +146,77 @@ try
     
     if (($checks -eq "licenses") -Or ($checks -eq "all")) 
     {
+
+        if ($includeDevDeps)
+        {
+            $productionFlag = ""
+        }
+        else
+        {
+            $productionFlag = "--production"
+        }
+
         Write-Host "Checking licenses"
-        npm install --production | Out-Null
-        # get and remove not top-level dependencies
-        $prodDepList = $(npm ls --prod --depth 0 --parseable)
-        Get-ChildItem -Path .\node_modules\ | Where-Object {$_.FullName -notin $prodDepList} | Remove-Item -Force -Recurse
-        try {
-            $summary = $(license-checker --production --onlyAllow "$allowedLicenses" --summary)
+
+        if ($depth) 
+        {
+            Write-Host "Cleaning-up non-top level dependencies"
+            $prodDepList = $(npm ls $productionFlag --depth $depth --parseable --silent 2>$null)          
+            Get-ChildItem -Path .\node_modules\ | Where-Object {$_.FullName -notin $prodDepList} | Remove-Item -Force -Recurse
         }
-        catch {
+
+        Write-Host "Running license-checker"
+        $summary = $(license-checker $productionFlag --onlyAllow "$allowedLicenses" --summary)
+            
+        if ($LASTEXITCODE -ne 0) 
+        {
             $licenseCheckStatus = "FAILED"
-        }
-        
+            # get summary for breakdown
+            $summary = $(license-checker $productionFlag --summary)
+        }        
     }
+
+    if ($generateAttributions) 
+    {
+        Write-Host "Generating license attributions file"
+        $licenseFiles = Get-ChildItem -Path .\node_modules\*\LICENSE
+        #TODO: add output file name option
+        foreach ($license in $licenseFiles)
+        {
+            #Write-Host "Found LICENSE file in: $license"
+            $attributionsList += "="*$($license.Directory.Name).Length + 
+                "`r`n$($license.Directory.Name)`r`n"+ "="*$($license.Directory.Name).Length +"`r`n"
+            $attributionsList += $(Get-Content -Path $license -Encoding UTF8 -Raw)
+            $attributionsList += "`r`n"
+        }
+    }
+    
+    $attributionsList | Out-File -FilePath $attributionsOutputFile
 
     if (-Not $silent)
     {
-
-        Write-Host "--------------------"
-        Write-Host "Vulnerability check: $vulnCheckStatus"
-        Write-Host "--------------------"
-        Write-Host "Found: $($findingsVuln.Count) vulnerabilities. Low: $lowCount - Moderate: $moderateCount - High: $highCount"
-
-        if ($($findingsVuln.Count) -gt 0)
+        if (($checks -eq "vulnerabilities") -Or ($checks -eq "all"))
         {
-            Write-Host $($findingsVuln | ConvertTo-Json)
+            Write-Host "--------------------"
+            Write-Host "Vulnerability check: $vulnCheckStatus"
+            Write-Host "--------------------"
+            Write-Host "Found: $($findingsVuln.Count) vulnerabilities. Low: $lowCount - Moderate: $moderateCount - High: $highCount"
+    
+            if ($($findingsVuln.Count) -gt 0)
+            {
+                Write-Host $($findingsVuln | ConvertTo-Json)
+            }
         }
+        
         Write-Host "-------------------------"
         Write-Host "License compliance check: $licenseCheckStatus"
         Write-Host "-------------------------"
         Write-Host "License breakdown:"
-        Write-Host "$summary"
+        foreach ($line in $summary) 
+        {
+            # otherwise, line breaks are gone :/
+            Write-Host "$line"
+        }
     }
 
     if ($outputFileVuln)
