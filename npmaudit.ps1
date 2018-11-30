@@ -35,21 +35,27 @@ C:\PS> npmaudit.ps1 -targetFolder "myFolder" -failOnVulnLevel moderate -outputFi
 #>
 
 param (
-    [ValidateSet('all','licenses','vulnerabilities')]    
-    [string]$checks = "all",
+    [ValidateSet('all','check-licenses','find-vulnerabilities', 'generate-attributions')]    
+    [string]$action = "all",
     [string]$targetFolder = ".",
     [ValidateSet('none','low','moderate','high')]
     [string]$failOnVulnLevel = "none",
     [ValidateSet($true, $false)]  
     [bool]$includeDevDeps = $false,
-    [string]$depth = "",
+    [string]$depth = "0",
     [string]$outputFileVuln = "",
     [ValidateSet($true, $false)]  
-    [bool]$silent = $false,
-    [ValidateSet($true, $false)]  
-    [bool]$generateAttributions = $false,
-    [string]$attributionsOutputFile = "ATTRIBUTIONS"
+    [bool]$silent = $false,  
+    [string]$attributionsOutputFile = "ATTRIBUTIONS",
+    [ValidateSet($true, $false)]
+    [bool]$installPrereqs = $true
 )
+
+if ([int]$(npm -v).Split('.')[0] -lt 6 ) 
+{
+    Write-Host "ERR! npm version must be 6 or greater"
+    Exit 1
+}
 
 if (-Not (Test-Path $targetFolder\package.json))
 {
@@ -59,8 +65,15 @@ if (-Not (Test-Path $targetFolder\package.json))
 
 if ( -Not ($(npm -g ls license-checker --parseable) -like "*\license-checker")) 
 {
-    Write-Host "ERR! Required npm package 'license-checker' is not installed globally"
-    Exit 1
+    if ($installPrereqs) 
+    {
+        npm install -g license-checker | Out-Null
+    }
+    else 
+    {
+        Write-Host "ERR! Required npm package 'license-checker' is not installed globally"
+        Exit 1    
+    }
 }
 
 $findingsVuln = @()
@@ -105,27 +118,27 @@ try
     }
 
     $content | ConvertTo-Json | Out-File package.json -Encoding ASCII
+
     if (-Not $silent) { Write-Host "Resolving dependencies" }
     
-    if (($checks -eq "all") -Or ($checks -eq "licenses"))
-    {
-        npm install --no-audit --silent | Out-Null
-    }
-    else 
+    if (($action -eq 'find-vulnerabilities') )
     {
         # we don't need to actually install for vuln check
         npm install --package-lock-only --no-audit --silent | Out-Null
     }
+    else 
+    {
+        npm install --no-audit --silent | Out-Null        
+    }
     
-    if (($checks -eq "vulnerabilities") -Or ($checks -eq "all"))
+    if (($action -eq 'find-vulnerabilities') -Or ($action -eq "all"))
     {
         if (-Not $silent) { Write-Host "Looking for vulnerabilities in dependencies" }
 
-        $audit = $(npm audit -j | ConvertFrom-Json)
+        $audit = $(npm audit -j | ConvertFrom-Json )
 
         foreach ($finding in $audit.advisories.PSObject.Properties)
         {
-            $finding
             switch ($finding.Value.severity)
             {
                 "high" { $highCount += 1}
@@ -146,10 +159,10 @@ try
     }
     
     if ($($findingsVuln.Count) -gt 0) {
-        $vulnCheckStatus = "FAIL"
+        $vulnCheckStatus = "FAILED"
     }
     
-    if (($checks -eq "licenses") -Or ($checks -eq "all")) 
+    if (($action -eq 'check-licenses') -Or ($action -eq "all")) 
     {
 
         if ($includeDevDeps)
@@ -181,10 +194,11 @@ try
         }        
     }
 
-    if ($generateAttributions) 
+    if (($action -eq 'generate-attributions')  -Or ($action -eq 'all')) 
     {
         if (-Not $silent) { Write-Host "Generating license attributions file" }
         $licenseFiles = Get-ChildItem -Path .\node_modules\*\LICENSE
+        $attributionsList += "This product uses third-party components with the following licenses:`r`n`r`n"
         foreach ($license in $licenseFiles)
         {
             # if (-Not $silent) { Write-Host "Found LICENSE file in: $license" }
@@ -199,7 +213,7 @@ try
 
     if (-Not $silent)
     {
-        if (($checks -eq "vulnerabilities") -Or ($checks -eq "all"))
+        if (($action -eq 'find-vulnerabilities') -Or ($action -eq "all"))
         {
             Write-Host "--------------------"
             Write-Host "Vulnerability check: $vulnCheckStatus"
@@ -208,18 +222,21 @@ try
     
             if ($($findingsVuln.Count) -gt 0)
             {
-                Write-Host $($findingsVuln | ConvertTo-Json)
+                Write-Host $($findingsVuln | ConvertTo-Json) 
             }
         }
-        
-        Write-Host "-------------------------"
-        Write-Host "License compliance check: $licenseCheckStatus"
-        Write-Host "-------------------------"
-        Write-Host "License breakdown:"
-        foreach ($line in $summary) 
+
+        if (($action -eq 'check-licenses') -Or ($action -eq "all"))
         {
-            # otherwise, line breaks are gone :/
-            Write-Host "$line"
+            Write-Host "-------------------------"
+            Write-Host "License compliance check: $licenseCheckStatus"
+            Write-Host "-------------------------"
+            Write-Host "License breakdown:"
+            foreach ($line in $summary) 
+            {
+                # otherwise, line breaks are gone :/
+                Write-Host "$line"
+            }
         }
     }
 
