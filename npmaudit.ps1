@@ -49,12 +49,17 @@ param (
     [ValidateSet($true, $false)]  
     [bool]$generateAttributions = $false,
     [string]$attributionsOutputFile = "ATTRIBUTIONS"
-
 )
 
 if (-Not (Test-Path $targetFolder\package.json))
 {
     Write-Host "ERR! Required file package.json doesn't exist in specified location"
+    Exit 1
+}
+
+if ( -Not ($(npm -g ls license-checker --parseable) -like "*\license-checker")) 
+{
+    Write-Host "ERR! Required npm package 'license-checker' is not installed globally"
     Exit 1
 }
 
@@ -156,16 +161,16 @@ try
             $productionFlag = "--production"
         }
 
-        Write-Host "Checking licenses"
+        if (-Not $silent) { Write-Host "Checking licenses" }
 
         if ($depth) 
         {
-            Write-Host "Cleaning-up non-top level dependencies"
+            if (-Not $silent) { Write-Host "Cleaning-up non-top level dependencies" }
             $prodDepList = $(npm ls $productionFlag --depth $depth --parseable --silent 2>$null)          
             Get-ChildItem -Path .\node_modules\ | Where-Object {$_.FullName -notin $prodDepList} | Remove-Item -Force -Recurse
         }
 
-        Write-Host "Running license-checker"
+        if (-Not $silent) { Write-Host "Running license-checker" }
         $summary = $(license-checker $productionFlag --onlyAllow "$allowedLicenses" --summary)
             
         if ($LASTEXITCODE -ne 0) 
@@ -178,12 +183,11 @@ try
 
     if ($generateAttributions) 
     {
-        Write-Host "Generating license attributions file"
+        if (-Not $silent) { Write-Host "Generating license attributions file" }
         $licenseFiles = Get-ChildItem -Path .\node_modules\*\LICENSE
-        #TODO: add output file name option
         foreach ($license in $licenseFiles)
         {
-            #Write-Host "Found LICENSE file in: $license"
+            # if (-Not $silent) { Write-Host "Found LICENSE file in: $license" }
             $attributionsList += "="*$($license.Directory.Name).Length + 
                 "`r`n$($license.Directory.Name)`r`n"+ "="*$($license.Directory.Name).Length +"`r`n"
             $attributionsList += $(Get-Content -Path $license -Encoding UTF8 -Raw)
@@ -227,7 +231,7 @@ try
 }
 catch
 {
-    Write-Host "Error occurred: $($_.Exception)"
+    if (-Not $silent) { Write-Host "Error occurred: $($_.Exception)" }
 }
 finally
 {
