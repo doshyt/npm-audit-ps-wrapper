@@ -135,7 +135,7 @@ try
     {
         if (-Not $silent) { Write-Host "Looking for vulnerabilities in dependencies" }
 
-        $audit = $(npm audit -j | ConvertFrom-Json )
+        $audit = $(npm audit -j --registry="https://registry.npmjs.org/" | ConvertFrom-Json )
 
         foreach ($finding in $audit.advisories.PSObject.Properties)
         {
