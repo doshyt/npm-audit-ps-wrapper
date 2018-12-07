@@ -115,6 +115,27 @@ try
     if (-Not $includeDevDeps)
     {
         $content.PSObject.Properties.Remove('devDependencies')
+        
+        # handle jspm dependencies
+        foreach ($item in $content.jspm.dependencies.PSObject.Properties) 
+        {
+            $version = $($item.value).Split("@")[1]
+            $source = $($item.value).Split(":")[0]
+
+            if ($source -eq "npm") 
+            {
+                $content.dependencies | Add-Member -MemberType NoteProperty -Name $item.name -Value $version -Force
+            }
+            else 
+            {
+                if (-Not $silent) 
+                {
+                    Write-Host "Detected JSPM dependency which is not in npm: $($item.value)" -ForegroundColor Yellow 
+                }
+                
+            }
+            
+        }
     }
 
     $content | ConvertTo-Json | Out-File package.json -Encoding ASCII
