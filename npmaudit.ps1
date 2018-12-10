@@ -68,18 +68,17 @@ if (-Not (Test-Path $targetFolder\package.json))
 if (-Not $pathToLicenseChecker) 
 {
     $pathToLicenseChecker = "license-checker"
-}
-
-if ( -Not ($(npm -g ls $pathToLicenseChecker --parseable) -like "*\$pathToLicenseChecker")) 
-{
-    if ($installPrereqs) 
+    if ( -Not ($(npm -g ls license-checker --parseable) -like "*\license-checker")) 
     {
-        npm install -g $pathToLicenseChecker | Out-Null
-    }
-    else 
-    {
-        Write-Host "ERR! Required npm package 'license-checker' is not installed globally"
-        Exit 1    
+        if ($installPrereqs) 
+        {
+            npm install -g license-checker | Out-Null
+        }
+        else 
+        {
+            Write-Host "ERR! Required npm package 'license-checker' is not installed globally"
+            Exit 1    
+        }
     }
 }
 
@@ -215,10 +214,10 @@ try
 
         if ($licenseExclusions)
         {
-            $excludeFlag = "--excludePackages slm@1.0.0"# `"$licenseExclusions`""
+            $excludeFlag = "--excludePackages $licenseExclusions"
         }
-        
-        $summary = & $pathToLicenseChecker $productionFlag --onlyAllow `"$allowedLicenses`" --summary $excludeFlag
+        $args = "$productionFlag --onlyAllow `"$allowedLicenses`" --summary " + $excludeFlag
+        $summary = & "$pathToLicenseChecker" $args
             
         if ($LASTEXITCODE -ne 0) 
         {
