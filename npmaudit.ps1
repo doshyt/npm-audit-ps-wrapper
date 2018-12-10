@@ -48,7 +48,9 @@ param (
     [bool]$silent = $false,  
     [string]$attributionsOutputFile = "ATTRIBUTIONS",
     [ValidateSet($true, $false)]
-    [bool]$installPrereqs = $true
+    [bool]$installPrereqs = $true,
+    [string]$pathToLicenseChecker = "",
+    [string]$licenseExclusions
 )
 
 if ([int]$(npm -v).Split('.')[0] -lt 6 ) 
@@ -63,11 +65,16 @@ if (-Not (Test-Path $targetFolder\package.json))
     Exit 1
 }
 
-if ( -Not ($(npm -g ls license-checker --parseable) -like "*\license-checker")) 
+if (-Not $pathToLicenseChecker) 
+{
+    $pathToLicenseChecker = "license-checker"
+}
+
+if ( -Not ($(npm -g ls $pathToLicenseChecker --parseable) -like "*\$pathToLicenseChecker")) 
 {
     if ($installPrereqs) 
     {
-        npm install -g license-checker | Out-Null
+        npm install -g $pathToLicenseChecker | Out-Null
     }
     else 
     {
@@ -204,14 +211,20 @@ try
             Get-ChildItem -Path .\node_modules\ | Where-Object {$_.FullName -notin $prodDepList} | Remove-Item -Force -Recurse
         }
 
-        if (-Not $silent) { Write-Host "Running license-checker" }
-        $summary = $(license-checker $productionFlag --onlyAllow "$allowedLicenses" --summary)
+        if (-Not $silent) { Write-Host "Running $pathToLicenseChecker" }
+
+        if ($licenseExclusions)
+        {
+            $excludeFlag = "--excludePackages slm@1.0.0"# `"$licenseExclusions`""
+        }
+        
+        $summary = & $pathToLicenseChecker $productionFlag --onlyAllow `"$allowedLicenses`" --summary $excludeFlag
             
         if ($LASTEXITCODE -ne 0) 
         {
             $licenseCheckStatus = "FAILED"
             # get summary for breakdown
-            $summary = $(license-checker $productionFlag --summary)
+            $summary = & $pathToLicenseChecker $productionFlag --summary
         }        
     }
 
